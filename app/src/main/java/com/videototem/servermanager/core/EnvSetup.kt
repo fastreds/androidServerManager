@@ -54,8 +54,13 @@ object EnvSetup {
             canFix = rootOk && !termuxOk
         )
 
-        val chanOk = if (!termuxOk) false
+        var chanOk = if (!termuxOk) false
         else TermuxCommander.query(ctx, "echo CHANNEL_OK")?.contains("CHANNEL_OK") == true
+        if (!chanOk && termuxOk && RootShell.rootAvailable()) {
+            RootShell.exec("mkdir -p /data/data/com.termux/files/home/.termux && echo 'allow-external-apps = true' >> /data/data/com.termux/files/home/.termux/termux.properties && chmod 644 /data/data/com.termux/files/home/.termux/termux.properties")
+            kotlinx.coroutines.delay(1500)
+            chanOk = TermuxCommander.query(ctx, "echo CHANNEL_OK")?.contains("CHANNEL_OK") == true
+        }
         items += EnvItem(
             "channel", "Canal RUN_COMMAND",
             when { !termuxOk -> State.UNKNOWN; chanOk -> State.OK; else -> State.FAIL },
@@ -174,10 +179,48 @@ object EnvSetup {
         LogStore.append("entorno", "fix[$id] iniciado")
         return when (id) {
             "termux" -> {
+                if (RootShell.rootAvailable()) {
+                    try {
+                        val apkUrl = "https://f-droid.org/repo/com.termux_118.apk"
+                        val tmp = java.io.File(ctx.cacheDir, "termux.apk")
+                        val okHttp = okhttp3.OkHttpClient.Builder().connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
+                        val req = okhttp3.Request.Builder().url(apkUrl).header("User-Agent", "androidServerManager").build()
+                        okHttp.newCall(req).execute().use { resp ->
+                            if (resp.isSuccessful && resp.body != null) {
+                                resp.body!!.byteStream().use { inp -> tmp.outputStream().use { out -> inp.copyTo(out) } }
+                            }
+                        }
+                        if (tmp.exists() && tmp.length() > 1024 * 500) {
+                            val pub = java.io.File("/data/local/tmp/termux.apk")
+                            RootShell.exec("cp ${Cmd.sh(tmp.absolutePath)} ${Cmd.sh(pub.absolutePath)} && chmod 644 ${Cmd.sh(pub.absolutePath)}")
+                            val r = RootShell.exec("pm install -r ${Cmd.sh(pub.absolutePath)} 2>&1")
+                            if (r.isSuccess || r.out.any { it.contains("Success", ignoreCase = true) }) {
+                                return "Termux instalado automáticamente — abre Termux una vez y vuelve a Analizar"
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
                 openUrl(ctx, "https://f-droid.org/es/packages/com.termux/")
-                "abierta la página de Termux (F-Droid). Instálala, concede root y vuelve a Analizar"
+                "abierta la página de Termux (F-Droid). Si falla la auto-instalación, instálala manualmente y vuelve a Analizar"
             }
             "tailscale" -> {
+                if (RootShell.rootAvailable()) {
+                    try {
+                        val apkUrl = "https://f-droid.org/repo/com.tailscale.ipn_180.apk"
+                        val tmp = java.io.File(ctx.cacheDir, "tailscale.apk")
+                        val okHttp = okhttp3.OkHttpClient.Builder().connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
+                        val req = okhttp3.Request.Builder().url(apkUrl).build()
+                        okHttp.newCall(req).execute().use { resp ->
+                            if (resp.isSuccessful && resp.body != null) resp.body!!.byteStream().use { inp -> tmp.outputStream().use { out -> inp.copyTo(out) } }
+                        }
+                        if (tmp.exists() && tmp.length() > 1024 * 500) {
+                            val pub = java.io.File("/data/local/tmp/tailscale.apk")
+                            RootShell.exec("cp ${Cmd.sh(tmp.absolutePath)} ${Cmd.sh(pub.absolutePath)} && chmod 644 ${Cmd.sh(pub.absolutePath)}")
+                            val r = RootShell.exec("pm install -r ${Cmd.sh(pub.absolutePath)} 2>&1")
+                            if (r.isSuccess || r.out.any { it.contains("Success", ignoreCase = true) }) return "Tailscale instalado automáticamente"
+                        }
+                    } catch (_: Exception) {}
+                }
                 openUrl(ctx, "https://play.google.com/store/apps/details?id=${cfg.tailscalePackage}")
                 "abierta la página de Tailscale en Play Store"
             }
