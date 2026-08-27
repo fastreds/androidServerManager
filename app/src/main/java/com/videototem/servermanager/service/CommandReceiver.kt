@@ -82,6 +82,15 @@ class CommandReceiver : BroadcastReceiver() {
                             .putExtra("env_action", "prepare")
                         ctx.startActivity(i)
                     }
+                    "uninstall" -> {
+                        val idsCsv = intent.getStringExtra("ids") ?: ""
+                        val ids = idsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+                        val i = Intent(ctx, com.videototem.servermanager.MainActivity::class.java)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            .putExtra("env_action", "uninstall")
+                            .putExtra("env_ids", idsCsv.ifBlank { ids.joinToString(",") })
+                        ctx.startActivity(i)
+                    }
                     else -> {
                         val ok = TermuxCommander.runCommand(ctx, t.ubuntuBackground(cmd))
                         LogStore.append("api", if (ok) "enviado" else "fallo al enviar")

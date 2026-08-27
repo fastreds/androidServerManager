@@ -115,6 +115,11 @@ class MainActivity : ComponentActivity() {
                 runEnv("Arreglar $id") { EnvSetup.fix(this@MainActivity, cfg, id) }
             }
             "prepare" -> runEnv("Preparar entorno") { EnvSetup.prepareAll(this@MainActivity, cfg) }
+            "uninstall" -> {
+                val csv = it.getStringExtra("env_ids") ?: ""
+                val ids = csv.split(",").map { s -> s.trim() }.filter { it.isNotBlank() }.toSet()
+                if (ids.isEmpty()) tab = 1 else runEnv("Limpiar entorno") { com.videototem.servermanager.core.Uninstaller.uninstall(this@MainActivity, cfg, ids) }
+            }
         }
     }
 
@@ -300,7 +305,8 @@ class MainActivity : ComponentActivity() {
                             runEnv("Analizar entorno") { EnvSetup.analyze(this@MainActivity, cfg).let { r -> envReport = r; "componentes: " + r.items.count { it.state == State.OK } + "/" + r.items.size + " OK" } }
                         },
                         onFix = { id -> runEnv("Arreglar $id") { EnvSetup.fix(this@MainActivity, cfg, id) } },
-                        onPrepareAll = { runEnv("Preparar entorno") { EnvSetup.prepareAll(this@MainActivity, cfg) } }
+                        onPrepareAll = { runEnv("Preparar entorno") { EnvSetup.prepareAll(this@MainActivity, cfg) } },
+                        onUninstall = { ids -> runEnv("Limpiar entorno") { com.videototem.servermanager.core.Uninstaller.uninstall(this@MainActivity, cfg, ids) } }
                     )
                     2 -> SettingsScreen(
                         cfg,
