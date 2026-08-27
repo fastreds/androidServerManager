@@ -144,16 +144,18 @@ object EnvSetup {
         )
 
         val tsInstalled = isInstalled(ctx, cfg.tailscalePackage)
+        val tsBinOk = chanOk && TermuxCommander.query(ctx, "command -v tailscale >/dev/null 2>&1 && echo TS_BIN_OK")?.contains("TS_BIN_OK") == true
         val tsIp = TailscaleManager.detectIp()
+        val tsOk = tsInstalled || tsBinOk
         items += EnvItem(
-            "tailscale", "Tailscale (app + conectado)",
-            when { !tsInstalled -> State.FAIL; tsIp != null -> State.OK; else -> State.WARN },
+            "tailscale", "Tailscale (conectado)",
+            when { !tsOk -> State.FAIL; tsIp != null -> State.OK; else -> State.WARN },
             when {
-                !tsInstalled -> "app no instalada"
+                !tsOk -> "no instalado (ni app ni binario)"
                 tsIp != null -> "conectado · $tsIp"
-                else -> "app instalada pero sin IP (ábrela y conecta)"
+                else -> "instalado pero sin IP (ejecuta tailscaled o abre la app)"
             },
-            canFix = !tsInstalled
+            canFix = !tsOk || tsIp == null
         )
 
         val sshUser = if (chanOk)
@@ -204,25 +206,26 @@ object EnvSetup {
                 "abierta la página de Termux (F-Droid). Si falla la auto-instalación, instálala manualmente y vuelve a Analizar"
             }
             "tailscale" -> {
-                if (RootShell.rootAvailable()) {
-                    try {
-                        val apkUrl = "https://f-droid.org/repo/com.tailscale.ipn_180.apk"
-                        val tmp = java.io.File(ctx.cacheDir, "tailscale.apk")
-                        val okHttp = okhttp3.OkHttpClient.Builder().connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
-                        val req = okhttp3.Request.Builder().url(apkUrl).build()
-                        okHttp.newCall(req).execute().use { resp ->
-                            if (resp.isSuccessful && resp.body != null) resp.body!!.byteStream().use { inp -> tmp.outputStream().use { out -> inp.copyTo(out) } }
-                        }
-                        if (tmp.exists() && tmp.length() > 1024 * 500) {
-                            val pub = java.io.File("/data/local/tmp/tailscale.apk")
-                            RootShell.exec("cp ${Cmd.sh(tmp.absolutePath)} ${Cmd.sh(pub.absolutePath)} && chmod 644 ${Cmd.sh(pub.absolutePath)}")
-                            val r = RootShell.exec("pm install -r ${Cmd.sh(pub.absolutePath)} 2>&1")
-                            if (r.isSuccess || r.out.any { it.contains("Success", ignoreCase = true) }) return "Tailscale instalado automáticamente"
-                        }
-                    } catch (_: Exception) {}
+                TermuxCommander.runCommand(ctx, "pkg update -y && pkg install -y tailscale curl wget ca-certificates 2>&1 | tail -n 5")
+                TermuxCommander.runCommand(
+                    ctx, t.ubuntuBackground(
+                        "apt-get update -y && apt-get install -y curl ca-certificates gnupg 2>/dev/null; " +
+                            "curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg 2>/dev/null | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null 2>&1; " +
+                            "curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list 2>/dev/null | tee /etc/apt/sources.list.d/tailscale.list >/dev/null 2>&1; " +
+                            "apt-get update -y 2>/dev/null; apt-get install -y tailscale 2>/dev/null; true"
+                    )
+                )
+                val startOk = poll(ctx, "tailscaled --version 2>/dev/null | head -n1 && echo TS_OK", "TS_OK", 120000, 15000) ||
+                    poll(ctx, "command -v tailscale && echo TS_BIN_OK", "TS_BIN_OK", 90000, 10000)
+                if (startOk) {
+                    TermuxCommander.runCommand(ctx, "nohup tailscaled --tun=userspace-networking --socks5-server=localhost:1055 >/dev/null 2>&1 &")
+                    TermuxCommander.runCommand(ctx, t.ubuntuBackground("nohup tailscaled --tun=userspace-networking >/dev/null 2>&1 &"))
                 }
-                openUrl(ctx, "https://play.google.com/store/apps/details?id=${cfg.tailscalePackage}")
-                "abierta la página de Tailscale en Play Store"
+                delay(8000)
+                val ip = TailscaleManager.detectIp()
+                return if (ip != null) "Tailscale instalado y conectado · $ip"
+                else if (startOk) "Tailscale binario instalado — ejecuta: tailscale up (o tailscale up --ssh)"
+                else "instalación por consola en curso; re-analiza luego"
             }
             "proot" -> {
                 TermuxCommander.runCommand(ctx, "pkg install -y proot-distro curl")
@@ -243,16 +246,20 @@ object EnvSetup {
             }
             "node" -> {
                 TermuxCommander.runCommand(
-                    ctx,
-                    t.ubuntuBackground("apt-get update -y; DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm")
+                    ctx, t.ubuntuBackground(
+                        "apt-get update -y && apt-get install -y curl ca-certificates gnupg && " +
+                            "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && " +
+                            "apt-get install -y nodejs && npm install -g npm@latest"
+                    )
                 )
-                val ok = poll(ctx, t.ubuntuQuery("command -v node && echo NODE_OK"), "NODE_OK", 360000, 20000)
-                if (ok) "Node.js instalado en Ubuntu" else "instalación apt en curso; re-analiza luego"
+                val ok = poll(ctx, t.ubuntuQuery("node -v 2>/dev/null | grep -E \"v20\\.\" && echo NODE_OK"), "NODE_OK", 360000, 20000) ||
+                    poll(ctx, t.ubuntuQuery("command -v node && echo NODE_OK"), "NODE_OK", 360000, 20000)
+                if (ok) "Node.js 20 instalado en Ubuntu" else "instalación NodeSource en curso; re-analiza luego"
             }
             "pm2" -> {
-                TermuxCommander.runCommand(ctx, t.ubuntuBackground("npm install -g pm2"))
-                val ok = poll(ctx, t.ubuntuQuery("command -v pm2 && echo PM2_OK"), "PM2_OK", 240000, 15000)
-                if (ok) "PM2 instalado en Ubuntu" else "instalación npm en curso; re-analiza luego"
+                TermuxCommander.runCommand(ctx, t.ubuntuBackground("npm install -g pm2@latest && pm2 --version"))
+                val ok = poll(ctx, t.ubuntuQuery("pm2 --version 2>/dev/null | head -n1 && echo PM2_OK"), "PM2_OK", 240000, 15000)
+                if (ok) "PM2 (última versión) instalado en Ubuntu" else "instalación npm en curso; re-analiza luego"
             }
             "dump" -> {
                 TermuxCommander.runCommand(ctx, t.ubuntuBackground("pm2 ping >/dev/null 2>&1; pm2 save"))
