@@ -1,0 +1,6 @@
+# androidServerManager
+*.apk
+.gradle/
+build/
+.kotlin/
+local.properties
