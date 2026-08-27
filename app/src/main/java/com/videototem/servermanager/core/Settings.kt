@@ -21,8 +21,8 @@ data class Config(
     val intervalSec: Int = 30,
     val autoFix: Boolean = true,
     val autoStartWatchdog: Boolean = true,
-    val githubRepo: String = "",
-    val autoUpdate: Boolean = false
+    val githubRepo: String = "fastreds/androidServerManager",
+    val autoUpdate: Boolean = true
 )
 
 object Settings {
